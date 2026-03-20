@@ -2,53 +2,54 @@
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <vector>
+#include <thread>
+#include <chrono>
 
 using namespace std;
 
-int main() {
-    ifstream memFile("/proc/meminfo");
-
-    if (!memFile.is_open()) {
-        cout << "Error: Could not open /proc/meminfo." << endl;
-        return 1;
-    }
-
+vector<long long> getCpuTicks() {
+    ifstream statFile("/proc/stat");
     string line;
-    long long totalMem = 0;
-    long long availableMem = 0;
     
-    while (getline(memFile, line)) {
-        if (line.find("MemTotal:") == 0) {
-            string label;
-            long long value;
-            string unit;
-            
-            stringstream ss(line);
-            ss >> label >> value >> unit; 
-            totalMem = value;
-        }
-        
-        if (line.find("MemAvailable:") == 0) {
-            string label;
-            long long value;
-            string unit;
-            
-            stringstream ss(line);
-            ss >> label >> value >> unit;
-            availableMem = value;
-        }
-    }
+    getline(statFile, line);
+    statFile.close();
 
-    memFile.close();
+    stringstream ss(line);
+    string label;
+    ss >> label;
 
-    if (totalMem > 0) {
-        long long usedMem = totalMem - availableMem;
-        double memUsagePercent = (static_cast<double>(usedMem) / totalMem) * 100.0;
-        
-        cout << "System Memory Usage: " << memUsagePercent << "%" << endl;
-    } else {
-        cout << "Failed to parse memory." << endl;
-    }
+    long long user, nice, system, idle, iowait, irq, softirq, steal;
+    ss >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
+
+    long long idleTicks = idle + iowait;
+    long long nonIdleTicks = user + nice + system + irq + softirq + steal;
+    long long totalTicks = idleTicks + nonIdleTicks;
+
+    return {idleTicks, totalTicks};
+}
+
+int main() {
+    cout << "Aegis Probe Booting Up..." << endl;
+
+    vector<long long> prevCpu = getCpuTicks();
+    long long prevIdle = prevCpu[0];
+    long long prevTotal = prevCpu[1];
+
+    cout << "Calculating CPU Usage (1 second window)..." << endl;
+    this_thread::sleep_for(chrono::seconds(1));
+
+    vector<long long> currCpu = getCpuTicks();
+    long long currIdle = currCpu[0];
+    long long currTotal = currCpu[1];
+
+    long long totalDelta = currTotal - prevTotal;
+    long long idleDelta = currIdle - prevIdle;
+
+    double cpuUsagePercent = (static_cast<double>(totalDelta - idleDelta) / totalDelta) * 100.0;
+
+    cout << "-----------------------------------" << endl;
+    cout << "System CPU Usage:    " << cpuUsagePercent << "%" << endl;
     
     return 0;
 }
