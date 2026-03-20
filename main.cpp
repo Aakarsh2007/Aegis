@@ -5,6 +5,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include "httplib.h"
 
 using namespace std;
 
@@ -32,13 +33,13 @@ double getMemoryUsage() {
     ifstream memFile("/proc/meminfo");
     string line;
     long long totalMem = 0, availableMem = 0;
-    
+
     while (getline(memFile, line)) {
         if (line.find("MemTotal:") == 0) {
             string label, unit;
             long long value;
             stringstream ss(line);
-            ss >> label >> value >> unit; 
+            ss >> label >> value >> unit;
             totalMem = value;
         }
         if (line.find("MemAvailable:") == 0) {
@@ -57,13 +58,13 @@ double getMemoryUsage() {
 }
 
 int main() {
-    cout << "Aegis Probe initialized. Press Ctrl+C to terminate." << endl;
+    cout << "Aegis Probe initialized. Establishing network link..." << endl;
+
+    httplib::Client cli("localhost", 3000);
 
     while (true) {
         vector<long long> prevCpu = getCpuTicks();
-
         this_thread::sleep_for(chrono::seconds(2));
-
         vector<long long> currCpu = getCpuTicks();
         double memUsage = getMemoryUsage();
 
@@ -74,8 +75,14 @@ int main() {
             cpuUsage = (static_cast<double>(totalDelta - idleDelta) / totalDelta) * 100.0;
         }
 
-        cout << "{\"cpu\": " << cpuUsage << ", \"memory\": " << memUsage << "}" << endl;
+        string jsonPayload = "{\"cpu\": " + to_string(cpuUsage) + ", \"memory\": " + to_string(memUsage) + "}";
+
+        if (auto res = cli.Post("/metrics", jsonPayload, "application/json")) {
+            cout << "[SUCCESS] Telemetry transmitted. Orchestrator replied: " << res->status << endl;
+        } else {
+            cout << "[ERROR] Connection failed. Is the Orchestrator running?" << endl;
+        }
     }
-    
+
     return 0;
 }
