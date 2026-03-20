@@ -11,7 +11,6 @@ using namespace std;
 vector<long long> getCpuTicks() {
     ifstream statFile("/proc/stat");
     string line;
-    
     getline(statFile, line);
     statFile.close();
 
@@ -29,27 +28,54 @@ vector<long long> getCpuTicks() {
     return {idleTicks, totalTicks};
 }
 
+double getMemoryUsage() {
+    ifstream memFile("/proc/meminfo");
+    string line;
+    long long totalMem = 0, availableMem = 0;
+    
+    while (getline(memFile, line)) {
+        if (line.find("MemTotal:") == 0) {
+            string label, unit;
+            long long value;
+            stringstream ss(line);
+            ss >> label >> value >> unit; 
+            totalMem = value;
+        }
+        if (line.find("MemAvailable:") == 0) {
+            string label, unit;
+            long long value;
+            stringstream ss(line);
+            ss >> label >> value >> unit;
+            availableMem = value;
+        }
+    }
+    memFile.close();
+
+    if (totalMem == 0) return 0.0;
+    long long usedMem = totalMem - availableMem;
+    return (static_cast<double>(usedMem) / totalMem) * 100.0;
+}
+
 int main() {
-    cout << "Aegis Probe Booting Up..." << endl;
+    cout << "Aegis Probe initialized. Press Ctrl+C to terminate." << endl;
 
-    vector<long long> prevCpu = getCpuTicks();
-    long long prevIdle = prevCpu[0];
-    long long prevTotal = prevCpu[1];
+    while (true) {
+        vector<long long> prevCpu = getCpuTicks();
 
-    cout << "Calculating CPU Usage (1 second window)..." << endl;
-    this_thread::sleep_for(chrono::seconds(1));
+        this_thread::sleep_for(chrono::seconds(2));
 
-    vector<long long> currCpu = getCpuTicks();
-    long long currIdle = currCpu[0];
-    long long currTotal = currCpu[1];
+        vector<long long> currCpu = getCpuTicks();
+        double memUsage = getMemoryUsage();
 
-    long long totalDelta = currTotal - prevTotal;
-    long long idleDelta = currIdle - prevIdle;
+        long long totalDelta = currCpu[1] - prevCpu[1];
+        long long idleDelta = currCpu[0] - prevCpu[0];
+        double cpuUsage = 0.0;
+        if (totalDelta > 0) {
+            cpuUsage = (static_cast<double>(totalDelta - idleDelta) / totalDelta) * 100.0;
+        }
 
-    double cpuUsagePercent = (static_cast<double>(totalDelta - idleDelta) / totalDelta) * 100.0;
-
-    cout << "-----------------------------------" << endl;
-    cout << "System CPU Usage:    " << cpuUsagePercent << "%" << endl;
+        cout << "{\"cpu\": " << cpuUsage << ", \"memory\": " << memUsage << "}" << endl;
+    }
     
     return 0;
 }
