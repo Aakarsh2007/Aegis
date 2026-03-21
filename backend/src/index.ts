@@ -15,7 +15,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.post('/metrics', async (req: Request, res: Response) => {
-    const { cpu, memory } = req.body;
+    const { cpu, memory, stack_trace } = req.body;
     const probeId = process.env.PROBE_ID;
 
     if (cpu === undefined || memory === undefined) {
@@ -72,7 +72,8 @@ app.post('/metrics', async (req: Request, res: Response) => {
                             probe_id: probeId,
                             cpu_usage: cpu,
                             memory_usage: memory,
-                            issue_type: spikeReason
+                            issue_type: spikeReason,
+                            stack_trace: stack_trace || "No stack trace provided."
                         })
                     });
                     
