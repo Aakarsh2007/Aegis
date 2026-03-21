@@ -7,5 +7,6 @@ def process_data():
         count += 1
         if count == 100:
             print("Data processed.")
+            is_processing = False # Terminate the loop
 
 process_data()
