@@ -3,8 +3,9 @@ import uvicorn
 import os
 import time
 from dotenv import load_dotenv
-import google.generativeai as genai
-from github import Github
+from github import Github, Auth
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -12,11 +13,8 @@ gemini_key = os.getenv("GEMINI_API_KEY")
 github_token = os.getenv("GITHUB_TOKEN")
 github_repo_name = os.getenv("GITHUB_REPO")
 
-genai.configure(api_key=gemini_key)
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    system_instruction="You are Aegis, an elite SRE AI. You will receive a buggy code file causing a 99.9% CPU spike. Find the infinite loop or memory leak and fix it. OUTPUT ONLY THE RAW, CORRECTED CODE. Do not include markdown formatting like ```python. Do not explain the fix. Just the raw code."
-)
+client = genai.Client(api_key=gemini_key)
+sys_instruction = "You are Aegis, an elite SRE AI. You will receive a buggy code file causing a CPU or Memory spike. Find the root cause and fix it. OUTPUT ONLY THE RAW, CORRECTED CODE. Do not include markdown formatting like ```python. Do not explain the fix. Just the raw code."
 
 app = FastAPI()
 
@@ -24,13 +22,17 @@ app = FastAPI()
 async def remediate_incident(request: Request):
     payload = await request.json()
     incident_id = payload.get("incident_id")
+    cpu_usage = payload.get("cpu_usage")
+    memory_usage = payload.get("memory_usage") 
+    issue_type = payload.get("issue_type")     
     
     print("="*60)
-    print(f"🚨 AI ACTIVATED: Incident #{incident_id} | CRITICAL CPU SPIKE")
+    print(f"🚨 AI ACTIVATED: Incident #{incident_id} | {issue_type}")
     print("🐙 Initiating GitHub Auto-Remediation Protocol...")
 
     try:
-        g = Github(github_token)
+        auth = Auth.Token(github_token)
+        g = Github(auth=auth)
         repo = g.get_repo(github_repo_name)
         target_file_path = "buggy_service.py"
 
@@ -38,9 +40,16 @@ async def remediate_incident(request: Request):
         file_content = repo.get_contents(target_file_path)
         raw_code = file_content.decoded_content.decode('utf-8')
 
-        print("🧠 Gemini is analyzing the infinite loop...")
-        prompt = f"Fix this code that is causing a CPU spike. Return ONLY the raw code:\n\n{raw_code}"
-        response = model.generate_content(prompt)
+        print(f"🧠 Gemini is analyzing the {issue_type}...")
+        prompt = f"System Report: {issue_type}. CPU is at {cpu_usage}% and Memory is at {memory_usage}%. Fix this code that is causing the issue. Return ONLY the raw code:\n\n{raw_code}"
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=sys_instruction,
+            ),
+        )
         
         fixed_code = response.text.strip()
         if fixed_code.startswith("```"):
@@ -54,15 +63,15 @@ async def remediate_incident(request: Request):
 
         repo.update_file(
             path=target_file_path,
-            message=f"fix(aegis): auto-resolved CPU spike for Incident #{incident_id}",
+            message=f"fix(aegis): auto-resolved {issue_type} for Incident #{incident_id}",
             content=fixed_code,
             sha=file_content.sha,
             branch=new_branch_name
         )
 
         pr = repo.create_pull(
-            title=f"🚨 Aegis Auto-Remediation: CPU Spike Patch (Incident #{incident_id})",
-            body="### Automated AI Fix\nAegis detected a 99.9% CPU spike. The root cause was identified as an infinite loop in `buggy_service.py`. \n\nThis PR contains the AI-generated patch to resolve the system lockup.",
+            title=f"🚨 Aegis Auto-Remediation: Patch (Incident #{incident_id})",
+            body=f"### Automated AI Fix\nAegis detected a {issue_type}. The root cause was identified in `buggy_service.py`. \n\nThis PR contains the AI-generated patch to resolve the system degradation.",
             head=new_branch_name,
             base="main"
         )

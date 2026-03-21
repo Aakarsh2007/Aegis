@@ -34,9 +34,16 @@ app.post('/metrics', async (req: Request, res: Response) => {
         console.log(`✅ Metric [ID: ${metricId}] | CPU: ${cpu}% | RAM: ${memory}%`);
 
         const CPU_THRESHOLD = 80.0;
+        const MEM_THRESHOLD = 90.0;
 
-        if (cpu > CPU_THRESHOLD) {
-            console.log(`⚠️ WARNING: High CPU detected (${cpu}%) on Probe ${probeId}`);
+        if (cpu > CPU_THRESHOLD || memory > MEM_THRESHOLD) {
+            
+            let spikeReason = "";
+            if (cpu > CPU_THRESHOLD && memory > MEM_THRESHOLD) spikeReason = "CRITICAL: CPU and Memory Spike";
+            else if (cpu > CPU_THRESHOLD) spikeReason = `High CPU Spike (${cpu}%)`;
+            else spikeReason = `Severe Memory Leak (${memory}%)`;
+
+            console.log(`⚠️ WARNING: ${spikeReason} detected on Probe ${probeId}`);
 
             const checkIncidentQuery = `
                 SELECT id FROM incidents 
@@ -52,9 +59,9 @@ app.post('/metrics', async (req: Request, res: Response) => {
                 `;
                 const newIncident = await pool.query(createIncidentQuery, [probeId]);
                 const incidentId = newIncident.rows[0].id;
-
+                
                 console.log(`🚨🔥 NEW INCIDENT CREATED [ID: ${incidentId}] 🔥🚨`);
-
+                
                 console.log(`📞 Paging AI Agent on Port 8000...`);
                 try {
                     const aiResponse = await fetch('http://localhost:8000/remediate', {
@@ -63,10 +70,12 @@ app.post('/metrics', async (req: Request, res: Response) => {
                         body: JSON.stringify({
                             incident_id: incidentId,
                             probe_id: probeId,
-                            cpu_usage: cpu
+                            cpu_usage: cpu,
+                            memory_usage: memory,
+                            issue_type: spikeReason
                         })
                     });
-
+                    
                     const aiData = await aiResponse.json();
                     console.log(`🤖 AI Agent Acknowledged:`, aiData.message);
                 } catch (webhookError) {
