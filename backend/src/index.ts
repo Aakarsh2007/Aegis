@@ -51,8 +51,28 @@ app.post('/metrics', async (req: Request, res: Response) => {
                     RETURNING id;
                 `;
                 const newIncident = await pool.query(createIncidentQuery, [probeId]);
+                const incidentId = newIncident.rows[0].id;
 
-                console.log(`🚨🔥 NEW INCIDENT CREATED [ID: ${newIncident.rows[0].id}] 🔥🚨`);
+                console.log(`🚨🔥 NEW INCIDENT CREATED [ID: ${incidentId}] 🔥🚨`);
+
+                console.log(`📞 Paging AI Agent on Port 8000...`);
+                try {
+                    const aiResponse = await fetch('http://localhost:8000/remediate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            incident_id: incidentId,
+                            probe_id: probeId,
+                            cpu_usage: cpu
+                        })
+                    });
+
+                    const aiData = await aiResponse.json();
+                    console.log(`🤖 AI Agent Acknowledged:`, aiData.message);
+                } catch (webhookError) {
+                    console.error(`❌ Failed to reach AI Agent. Is Python running?`, webhookError);
+                }
+
             } else {
                 console.log(`⏳ Incident already open [ID: ${existingIncident.rows[0].id}]. AI is working...`);
             }
