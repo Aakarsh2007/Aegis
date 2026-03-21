@@ -1,14 +1,17 @@
+import time
+
 def process_data():
     print("Starting data processing...")
-    is_processing = True
     count = 0
-
-
-    while is_processing:
+    
+    while True:
         count += 1
-        if count == 100:
-            print("Data processed.")
-            is_processing = False
+        print(f"Processing batch {count}...")
+        time.sleep(1)
+        if count == 5:
+            # FATAL BUG: Deliberate crash to trigger Aegis!
+            raise RuntimeError("CRITICAL SYSTEM FAILURE in buggy_service.py")
 
-
-process_data()
+if __name__ == "__main__":
+    process_data()
+    
