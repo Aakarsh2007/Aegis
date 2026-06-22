@@ -5,59 +5,143 @@ dotenv.config();
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    family: 4
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-async function setupCloudDatabase() {
-    console.log("🚀 Connecting to Cloud Database...");
+const LOCAL_MODE_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const LOCAL_MODE_API_KEY = 'local_mode_default_key_aegis_dev_0000';
 
+export async function setupDatabase(): Promise<void> {
+    console.log('🚀 Running Aegis database migration...');
+
+    const client = await pool.connect();
     try {
-        await pool.query(`
+        await client.query('BEGIN');
+
+        // ── Tenants ──────────────────────────────────────────────────────
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS tenants (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                email           VARCHAR(255) UNIQUE NOT NULL,
+                password_hash   VARCHAR(255) NOT NULL,
+                api_key         VARCHAR(255) UNIQUE NOT NULL,
+                github_repo     VARCHAR(255),
+                github_token    TEXT,
+                gemini_key      TEXT,
+                webhook_url     VARCHAR(255),
+                onboarding_step SMALLINT DEFAULT 1,
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+        console.log("✅ Table 'tenants' ready.");
+
+        // ── Probes ───────────────────────────────────────────────────────
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS probes (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                probe_id    VARCHAR(100) NOT NULL,
+                last_seen   TIMESTAMPTZ,
+                status      VARCHAR(20) DEFAULT 'offline',
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(tenant_id, probe_id)
+            );
+        `);
+        console.log("✅ Table 'probes' ready.");
+
+        // ── System metrics ───────────────────────────────────────────────
+        await client.query(`
             CREATE TABLE IF NOT EXISTS system_metrics (
-                id SERIAL PRIMARY KEY,
-                cpu_usage FLOAT NOT NULL,
-                memory_usage FLOAT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id              BIGSERIAL PRIMARY KEY,
+                tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                probe_id        VARCHAR(100) NOT NULL,
+                cpu_usage       FLOAT NOT NULL,
+                memory_usage    FLOAT NOT NULL,
+                timestamp       TIMESTAMPTZ DEFAULT NOW()
             );
         `);
-        console.log("✅ Table 'system_metrics' built successfully.");
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_metrics_tenant_time
+                ON system_metrics(tenant_id, timestamp DESC);
+        `);
+        console.log("✅ Table 'system_metrics' ready.");
 
-        await pool.query(`
+        // ── Incidents ────────────────────────────────────────────────────
+        await client.query(`
             CREATE TABLE IF NOT EXISTS incidents (
-                id SERIAL PRIMARY KEY,
-                probe_id VARCHAR(50) NOT NULL,
-                severity VARCHAR(50) NOT NULL,
-                status VARCHAR(50) NOT NULL,
-                pr_url VARCHAR(255)
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                probe_id        VARCHAR(100) NOT NULL,
+                severity        VARCHAR(50) NOT NULL DEFAULT 'Critical',
+                status          VARCHAR(20) NOT NULL DEFAULT 'Open',
+                issue_type      VARCHAR(100),
+                stack_trace     TEXT,
+                ai_reasoning    TEXT,
+                pr_url          VARCHAR(500),
+                error_message   TEXT,
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ DEFAULT NOW()
             );
         `);
-        console.log("✅ Table 'incidents' built successfully.");
+        await client.query(`
+            CREATE INDEX IF NOT EXISTS idx_incidents_tenant_status
+                ON incidents(tenant_id, status);
+        `);
+        console.log("✅ Table 'incidents' ready.");
 
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                api_key VARCHAR(255) UNIQUE NOT NULL,
-                crashes_fixed INT DEFAULT 0,
-                is_premium BOOLEAN DEFAULT FALSE
+        // ── Incident timeline ────────────────────────────────────────────
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS incident_timeline (
+                id              BIGSERIAL PRIMARY KEY,
+                incident_id     UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+                from_status     VARCHAR(20),
+                to_status       VARCHAR(20) NOT NULL,
+                note            TEXT,
+                occurred_at     TIMESTAMPTZ DEFAULT NOW()
             );
         `);
-        console.log("✅ Table 'users' built successfully.");
+        console.log("✅ Table 'incident_timeline' ready.");
 
-        await pool.query(`
-            INSERT INTO users (email, api_key) 
-            VALUES ('admin@aegis.com', 'aegis_live_999xxxx')
-            ON CONFLICT (email) DO NOTHING;
-        `);
-        console.log("✅ Default Admin user created with API Key: aegis_live_999xxxx");
+        // ── LOCAL_MODE seed tenant ────────────────────────────────────────
+        if (process.env.LOCAL_MODE === 'true') {
+            await client.query(`
+                INSERT INTO tenants (id, email, password_hash, api_key, onboarding_step)
+                VALUES ($1, 'local@aegis.dev', '$2b$12$localmodehashnoop000000000000000000000000000000000000', $2, 5)
+                ON CONFLICT (id) DO NOTHING;
+            `, [LOCAL_MODE_TENANT_ID, LOCAL_MODE_API_KEY]);
+            console.log('✅ LOCAL_MODE default tenant seeded.');
+        }
 
-        console.log("🎉 Cloud Database Migration Complete! Aegis is ready for the cloud.");
-
+        await client.query('COMMIT');
+        console.log('🎉 Database migration complete.');
     } catch (err) {
-        console.error("❌ FATAL ERROR: Could not build tables.", err);
+        await client.query('ROLLBACK');
+        console.error('❌ Migration failed, rolling back:', err);
+        throw err;
     } finally {
-        await pool.end();
+        client.release();
     }
 }
 
-setupCloudDatabase();
+export async function runRetentionCleanup(): Promise<void> {
+    try {
+        const result = await pool.query(
+            `DELETE FROM system_metrics WHERE timestamp < NOW() - INTERVAL '7 days'`
+        );
+        if ((result.rowCount ?? 0) > 0) {
+            console.log(`🧹 Retention cleanup: removed ${result.rowCount} old metric rows.`);
+        }
+    } catch (err) {
+        console.error('Retention cleanup error:', err);
+    }
+}
+
+export { pool, LOCAL_MODE_TENANT_ID, LOCAL_MODE_API_KEY };
+
+// Run directly when called as a script
+if (process.argv[1] && process.argv[1].endsWith('setup_db.ts')) {
+    setupDatabase()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+}

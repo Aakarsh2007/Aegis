@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 84% 5%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --border: 217 33% 15%;
+    --input: 217 33% 15%;
+    --primary: 188 94% 52%;
+    --primary-foreground: 222 84% 5%;
+    --muted: 217 33% 12%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 270 95% 65%;
+    --radius: 0.75rem;
+  }
+
+  .light {
+    --background: 0 0% 98%;
+    --foreground: 222 84% 5%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 84% 5%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --primary: 188 94% 40%;
+    --primary-foreground: 0 0% 98%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-[hsl(var(--background))] text-[hsl(var(--foreground))] antialiased;
+  }
+  ::selection { @apply bg-cyan-500/30 text-cyan-100; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { @apply bg-transparent; }
+::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-white/20; }
+
+/* Glow effects */
+.glow-cyan { box-shadow: 0 0 30px rgba(34, 211, 238, 0.15); }
+.glow-red  { box-shadow: 0 0 30px rgba(248, 113, 113, 0.2); }
+.glow-green { box-shadow: 0 0 20px rgba(74, 222, 128, 0.15); }
+
+/* Glass card */
+.glass {
+  @apply bg-white/5 backdrop-blur-md border border-white/10;
+}
