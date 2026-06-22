@@ -1,3 +1,41 @@
+# Build artifacts
 probe
+aegis-probe
+*.o
 
+# Logs
 real_server_error.log
+*.log
+
+# Environment files - NEVER COMMIT THESE
+.env
+.env.local
+.env.*.local
+*/.env
+*/.env.local
+
+# Node
+node_modules/
+*/node_modules/
+.next/
+*/.next/
+out/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+ai_agent/.venv/
+
+# Drizzle generated migrations (committed only when intentional)
+aegis-app/drizzle/migrations/*.sql
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp

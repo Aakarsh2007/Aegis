@@ -1,0 +1,10 @@
+.env
+.env.local
+.env.*.local
+node_modules/
+.next/
+out/
+dist/
+*.log
+drizzle/migrations/*.sql
+.DS_Store
