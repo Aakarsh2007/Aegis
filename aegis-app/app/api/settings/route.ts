@@ -41,6 +41,7 @@ export async function GET(): Promise<NextResponse> {
       email: session.user.email,
       name: session.user.name,
       githubTokenSet: !!settings?.githubAccessToken,
+      githubInstallationId: settings?.githubInstallationId ?? null,
       geminiApiKeySet: !!settings?.geminiApiKey,
       webhookUrl: settings?.webhookUrl ?? null,
       slackWebhookUrl: settings?.slackWebhookUrl

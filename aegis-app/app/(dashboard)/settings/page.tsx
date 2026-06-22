@@ -125,11 +125,15 @@ export default function SettingsPage() {
             <CardTitle className="text-sm flex items-center gap-2">
               <Github className="w-4 h-4" />
               GitHub Integration
-              {data?.githubTokenSet && <Badge variant="success" className="ml-auto">Connected</Badge>}
+              {data?.githubInstallationId ? (
+                <Badge variant="success" className="ml-auto">App Installed (ID: {data.githubInstallationId})</Badge>
+              ) : data?.githubTokenSet ? (
+                <Badge variant="success" className="ml-auto">PAT Connected</Badge>
+              ) : null}
             </CardTitle>
-            <CardDescription className="text-xs">Personal Access Token with repo scope for AI patch creation</CardDescription>
+            <CardDescription className="text-xs">Configure either a GitHub App installation (preferred) or a fallback Personal Access Token.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <div className="relative">
               <Input
                 type={showGithub ? "text" : "password"}
@@ -142,6 +146,11 @@ export default function SettingsPage() {
                 {showGithub ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            {data?.githubInstallationId && (
+              <p className="text-[10px] text-emerald-400">
+                ✓ GitHub App installation is active and preferred. PAT is only used as a secondary fallback.
+              </p>
+            )}
           </CardContent>
         </Card>
 

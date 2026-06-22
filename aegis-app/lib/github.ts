@@ -1,7 +1,39 @@
 import { Octokit } from "@octokit/rest";
+import { createAppAuth } from "@octokit/auth-app";
 
-export function makeOctokit(githubToken: string): Octokit {
-  return new Octokit({ auth: githubToken });
+export function makeAppOctokit(installationId: string | number): Octokit {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+  
+  if (!appId || !privateKey) {
+    throw new Error("GitHub App credentials (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY) are not configured");
+  }
+
+  const formattedPrivateKey = privateKey.includes("-----BEGIN RSA PRIVATE KEY-----")
+    ? privateKey
+    : Buffer.from(privateKey, "base64").toString("utf-8");
+
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: parseInt(appId, 10),
+      privateKey: formattedPrivateKey,
+      installationId: typeof installationId === "string" ? parseInt(installationId, 10) : installationId,
+    },
+  });
+}
+
+export function makeOctokit(auth: string | { token?: string | null; installationId?: string | null }): Octokit {
+  if (typeof auth === "string") {
+    return new Octokit({ auth });
+  }
+  if (auth.installationId) {
+    return makeAppOctokit(auth.installationId);
+  }
+  if (auth.token) {
+    return new Octokit({ auth: auth.token });
+  }
+  throw new Error("No GitHub credentials provided (need installation ID or PAT)");
 }
 
 export async function fetchFileFromRepo(

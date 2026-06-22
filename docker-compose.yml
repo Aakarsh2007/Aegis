@@ -18,9 +18,9 @@ services:
       timeout: 5s
       retries: 10
 
-  orchestrator:
+  aegis-app:
     build:
-      context: ./backend
+      context: ./aegis-app
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
@@ -29,50 +29,25 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://aegis:${DB_PASSWORD:-aegis_local_secret}@postgres:5432/aegis
-      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_min_32_chars}
+      DATABASE_URL: postgresql://aegis:${DB_PASSWORD:-aegis_local_secret}@postgres:5432/aegis
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change_me_in_production_min_32_chars_secret}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
-      AI_AGENT_URL: http://ai-agent:8000
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       CPU_THRESHOLD: ${CPU_THRESHOLD:-80}
       MEM_THRESHOLD: ${MEM_THRESHOLD:-90}
-      LOCAL_MODE: ${LOCAL_MODE:-false}
-      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3001}
-      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://localhost:3000}
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ || exit 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/dashboard || exit 1"]
+      interval: 15s
       timeout: 5s
       retries: 5
-
-  ai-agent:
-    build:
-      context: ./ai_agent
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-    ports:
-      - "8000:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  dashboard:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-    ports:
-      - "3001:3001"
 
 volumes:
   pgdata:

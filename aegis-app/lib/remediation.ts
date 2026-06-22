@@ -5,6 +5,7 @@ import {
   remediations,
   userSettings,
   repositories,
+  auditLogs,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { decryptOptional } from "@/lib/crypto";
@@ -22,6 +23,7 @@ import {
   createPullRequest,
   buildPRBody,
 } from "@/lib/github";
+import { sendAlerts } from "@/lib/alerts";
 
 export interface RemediationParams {
   incidentId: string;
@@ -33,39 +35,71 @@ export interface RemediationParams {
   stackTrace?: string;
 }
 
-export interface RemediationResult {
+export interface ProposalResult {
+  success: boolean;
+  remediationId?: string;
+  confidenceScore?: number;
+  targetFile?: string;
+  errorMessage?: string;
+}
+
+export interface ExecutionResult {
   success: boolean;
   prUrl?: string;
   prNumber?: number;
   branchName?: string;
-  targetFile?: string;
-  confidenceScore?: number;
-  explanation?: string;
   errorMessage?: string;
-  failedStep?: string;
 }
 
-export async function remediateIncident(
+// Simple diff helper to generate a unified diff for patch comparison
+function generateDiff(original: string, patched: string, filename: string): string {
+  const origLines = original.split("\n");
+  const patchLines = patched.split("\n");
+  let diff = `--- a/${filename}\n+++ b/${filename}\n`;
+  
+  let i = 0, j = 0;
+  while (i < origLines.length || j < patchLines.length) {
+    if (i < origLines.length && j < patchLines.length && origLines[i] === patchLines[j]) {
+      diff += `  ${origLines[i]}\n`;
+      i++; j++;
+    } else {
+      if (i < origLines.length) {
+        diff += `- ${origLines[i]}\n`;
+        i++;
+      }
+      if (j < patchLines.length) {
+        diff += `+ ${patchLines[j]}\n`;
+        j++;
+      }
+    }
+  }
+  return diff;
+}
+
+/**
+ * Stage 1: Generate patch proposal
+ * Analyzes logs, fetches source code, generates patch using Gemini, and saves it in pending_review.
+ */
+export async function generateRemediationProposal(
   params: RemediationParams
-): Promise<RemediationResult> {
-  const { incidentId, userId, probeId, cpu, memory, issueType, stackTrace } =
-    params;
+): Promise<ProposalResult> {
+  const { incidentId, userId, probeId, cpu, memory, issueType, stackTrace } = params;
 
-  console.log(`[Remediation] Starting for incident ${incidentId}`);
+  console.log(`[Remediation Proposal] Starting proposal for incident ${incidentId}`);
 
-  // Create remediation record
+  // Create remediation record in pending status
   const [remediationRecord] = await db
     .insert(remediations)
     .values({
       incidentId,
-      status: "running",
+      status: "pending_review",
     })
     .returning({ id: remediations.id });
 
   const remediationId = remediationRecord.id;
 
   try {
-    // ── Load user settings ─────────────────────────────────────────────────
+    // Load settings & config
     const settingsRows = await db
       .select()
       .from(userSettings)
@@ -73,11 +107,11 @@ export async function remediateIncident(
       .limit(1);
 
     const settings = settingsRows[0];
-
     const githubToken = decryptOptional(settings?.githubAccessToken);
+    const installationId = settings?.githubInstallationId;
     const geminiKey = decryptOptional(settings?.geminiApiKey);
 
-    // ── Load default repository ────────────────────────────────────────────
+    // Get default repository details
     let repoOwner: string | null = null;
     let repoName: string | null = null;
     let defaultBranch = "main";
@@ -96,18 +130,13 @@ export async function remediateIncident(
       }
     }
 
-    // ── Step 1: Extract filename from stack trace ──────────────────────────
-    let targetFile: string;
-
-    if (!stackTrace || stackTrace.length < 5) {
-      // No stack trace — try a generic approach
-      targetFile = "app.py"; // fallback
-      console.log(`[Remediation] No stack trace, using fallback file: ${targetFile}`);
-    } else {
+    // Step 1: Locate the target file
+    let targetFile = "app.py"; // default fallback
+    if (stackTrace && stackTrace.length > 5) {
       try {
         const genai = makeGeminiClient(geminiKey);
         targetFile = await extractFilenameFromStackTrace(genai, stackTrace);
-        console.log(`[Remediation] Target file: ${targetFile}`);
+        console.log(`[Remediation Proposal] Target file identified: ${targetFile}`);
 
         await db.insert(incidentEvents).values({
           incidentId,
@@ -116,14 +145,7 @@ export async function remediateIncident(
           metadata: { targetFile },
         });
       } catch (err) {
-        const msg = `Gemini filename extraction failed: ${err instanceof Error ? err.message : String(err)}`;
-        console.error(`[Remediation] ❌ ${msg}`);
-        return await markFailed(
-          remediationId,
-          incidentId,
-          msg,
-          "gemini_extraction"
-        );
+        console.error(`[Remediation Proposal] Gemini filename extraction failed:`, err);
       }
     }
 
@@ -133,224 +155,31 @@ export async function remediateIncident(
       .set({ affectedFile: targetFile, updatedAt: new Date() })
       .where(eq(incidents.id, incidentId));
 
-    // ── Step 2: Fetch file from GitHub ────────────────────────────────────
-    if (!githubToken || !repoOwner || !repoName) {
-      const msg =
-        "No GitHub credentials or repository configured. Skipping PR creation.";
-      console.warn(`[Remediation] ⚠️ ${msg}`);
+    // Step 2: Fetch code file from repository (using App installation or PAT)
+    let originalCode = "# No code available";
+    let fileSha = "";
 
-      // Still run AI analysis without the PR
-      await runAiAnalysisOnly(
-        remediationId,
-        incidentId,
-        geminiKey,
-        targetFile,
-        issueType,
-        cpu,
-        memory,
-        stackTrace
-      );
-      return {
-        success: false,
-        errorMessage: msg,
-        failedStep: "github_config",
-      };
-    }
-
-    let originalCode: string;
-    let fileSha: string;
-
-    try {
-      const octokit = makeOctokit(githubToken);
-      const fileData = await fetchFileFromRepo(
-        octokit,
-        repoOwner,
-        repoName,
-        targetFile,
-        defaultBranch
-      );
-      originalCode = fileData.content;
-      fileSha = fileData.sha;
-      console.log(`[Remediation] Fetched ${targetFile} (${originalCode.length} chars)`);
-    } catch (err) {
-      const msg = `GitHub file fetch failed for '${targetFile}': ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[Remediation] ❌ ${msg}`);
-      return await markFailed(
-        remediationId,
-        incidentId,
-        msg,
-        "github_fetch"
-      );
-    }
-
-    // ── Step 3: Generate patch ─────────────────────────────────────────────
-    let patchedCode: string;
-    let explanation: string;
-    let rollbackNotes: string;
-    let confidenceScore: number;
-
-    try {
-      const genai = makeGeminiClient(geminiKey);
-      const result = await generateCodePatch(genai, {
-        originalCode,
-        issueType,
-        cpuUsage: cpu,
-        memoryUsage: memory,
-        stackTrace,
-        filename: targetFile,
-      });
-
-      patchedCode = result.patchedCode;
-      explanation = result.explanation;
-      rollbackNotes = result.rollbackNotes;
-
-      confidenceScore = calculateConfidenceScore({
-        hasStackTrace: !!stackTrace && stackTrace.length > 5,
-        stackTraceLength: stackTrace?.length ?? 0,
-        filenameExplicit: !!stackTrace,
-        patchSize: patchedCode.length,
-        originalSize: originalCode.length,
-      });
-
-      console.log(
-        `[Remediation] Patch generated (confidence: ${(confidenceScore * 100).toFixed(0)}%)`
-      );
-    } catch (err) {
-      const msg = `Gemini patch generation failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[Remediation] ❌ ${msg}`);
-      return await markFailed(
-        remediationId,
-        incidentId,
-        msg,
-        "gemini_patch"
-      );
-    }
-
-    // ── Step 4: Create branch + commit + PR ───────────────────────────────
-    const branchName = `aegis-fix-${incidentId.slice(0, 8)}-${Date.now()}`;
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-
-    try {
-      const octokit = makeOctokit(githubToken);
-
-      await createBranch(octokit, repoOwner, repoName, branchName, defaultBranch);
-
-      await commitFileToRepo(
-        octokit,
-        repoOwner,
-        repoName,
-        targetFile,
-        patchedCode,
-        fileSha,
-        `fix(aegis): auto-remediation of ${issueType} in ${targetFile}`,
-        branchName
-      );
-
-      const prBody = buildPRBody({
-        incidentId,
-        probeId,
-        issueType,
-        cpuUsage: cpu,
-        memoryUsage: memory,
-        targetFile,
-        explanation,
-        appUrl,
-      });
-
-      const { url: prUrl, number: prNumber } = await createPullRequest(
-        octokit,
-        repoOwner,
-        repoName,
-        {
-          title: `🛡️ Aegis Auto-Fix: ${issueType.slice(0, 60)}`,
-          body: prBody,
-          head: branchName,
-          base: defaultBranch,
-        }
-      );
-
-      // ── Update all records ───────────────────────────────────────────────
-      await db
-        .update(remediations)
-        .set({
-          status: "success",
+    if ((githubToken || installationId) && repoOwner && repoName) {
+      try {
+        const octokit = makeOctokit({ token: githubToken, installationId });
+        const fileData = await fetchFileFromRepo(
+          octokit,
+          repoOwner,
+          repoName,
           targetFile,
-          originalCode,
-          patchedCode,
-          confidenceScore,
-          explanation,
-          rollbackNotes,
-          geminiModel: "gemini-2.5-flash",
-          prUrl,
-          prNumber,
-          branchName,
-          completedAt: new Date(),
-        })
-        .where(eq(remediations.id, remediationId));
-
-      await db
-        .update(incidents)
-        .set({
-          status: "resolved",
-          aiConfidenceScore: confidenceScore,
-          aiReasoning: explanation,
-          aiPatchExplanation: explanation,
-          prUrl,
-          prNumber,
-          branchName,
-          affectedFile: targetFile,
-          updatedAt: new Date(),
-          resolvedAt: new Date(),
-        })
-        .where(eq(incidents.id, incidentId));
-
-      await db.insert(incidentEvents).values({
-        incidentId,
-        eventType: "pr_created",
-        fromStatus: "analyzing",
-        toStatus: "resolved",
-        message: `PR created: ${prUrl}`,
-        metadata: { prUrl, prNumber, branchName, targetFile, confidenceScore },
-      });
-
-      console.log(`[Remediation] ✅ Incident ${incidentId} resolved. PR: ${prUrl}`);
-
-      return {
-        success: true,
-        prUrl,
-        prNumber,
-        branchName,
-        targetFile,
-        confidenceScore,
-        explanation,
-      };
-    } catch (err) {
-      const msg = `GitHub PR creation failed: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[Remediation] ❌ ${msg}`);
-      return await markFailed(remediationId, incidentId, msg, "github_pr");
+          defaultBranch
+        );
+        originalCode = fileData.content;
+        fileSha = fileData.sha;
+      } catch (err) {
+        console.error(`[Remediation Proposal] Could not fetch code file from GitHub:`, err);
+      }
     }
-  } catch (err) {
-    const msg = `Unexpected error: ${err instanceof Error ? err.message : String(err)}`;
-    console.error(`[Remediation] ❌ ${msg}`);
-    return await markFailed(remediationId, incidentId, msg, "unknown");
-  }
-}
 
-async function runAiAnalysisOnly(
-  remediationId: string,
-  incidentId: string,
-  geminiKey: string | null | undefined,
-  targetFile: string,
-  issueType: string,
-  cpu: number,
-  memory: number,
-  stackTrace?: string
-): Promise<void> {
-  try {
+    // Step 3: Propose patch code with Gemini
     const genai = makeGeminiClient(geminiKey);
-    const { explanation } = await generateCodePatch(genai, {
-      originalCode: stackTrace ?? "# No code available",
+    const patchResult = await generateCodePatch(genai, {
+      originalCode,
       issueType,
       cpuUsage: cpu,
       memoryUsage: memory,
@@ -358,35 +187,73 @@ async function runAiAnalysisOnly(
       filename: targetFile,
     });
 
+    const confidenceScore = calculateConfidenceScore({
+      hasStackTrace: !!stackTrace && stackTrace.length > 5,
+      stackTraceLength: stackTrace?.length ?? 0,
+      filenameExplicit: !!stackTrace,
+      patchSize: patchResult.patchedCode.length,
+      originalSize: originalCode.length,
+    });
+
+    const diff = generateDiff(originalCode, patchResult.patchedCode, targetFile);
+
+    // Save details to the remediation record
     await db
       .update(remediations)
       .set({
-        status: "failed",
-        explanation,
+        status: "pending_review",
         targetFile,
-        completedAt: new Date(),
+        originalCode,
+        patchedCode: patchResult.patchedCode,
+        patchDiff: diff,
+        confidenceScore,
+        explanation: patchResult.explanation,
+        rollbackNotes: patchResult.rollbackNotes,
+        geminiModel: "gemini-2.5-flash",
       })
       .where(eq(remediations.id, remediationId));
 
     await db
       .update(incidents)
       .set({
-        aiReasoning: explanation,
+        aiConfidenceScore: confidenceScore,
+        aiReasoning: patchResult.explanation,
+        aiPatchExplanation: patchResult.explanation,
+        status: "open", // Keeps the incident open for human review
         updatedAt: new Date(),
       })
       .where(eq(incidents.id, incidentId));
-  } catch {
-    // Best effort
-  }
-}
 
-async function markFailed(
-  remediationId: string,
-  incidentId: string,
-  errorMessage: string,
-  failedStep: string
-): Promise<RemediationResult> {
-  try {
+    await db.insert(incidentEvents).values({
+      incidentId,
+      eventType: "proposal_created",
+      message: `AI generated patch proposal for ${targetFile} (Confidence: ${(confidenceScore * 100).toFixed(0)}%)`,
+      metadata: { targetFile, confidenceScore },
+    });
+
+    // Send notifications to Slack/Discord if configured
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    await sendAlerts({
+      incidentId,
+      title: issueType,
+      severity: cpu > 90 || memory > 95 ? "critical" : "warning",
+      probeId,
+      issueType,
+      dashboardUrl: appUrl,
+      slackWebhookUrl: decryptOptional(settings?.slackWebhookUrl),
+      discordWebhookUrl: decryptOptional(settings?.discordWebhookUrl),
+    });
+
+    return {
+      success: true,
+      remediationId,
+      confidenceScore,
+      targetFile,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Remediation Proposal] Proposal failed: ${msg}`);
+
     await db
       .update(remediations)
       .set({
@@ -399,7 +266,7 @@ async function markFailed(
       .update(incidents)
       .set({
         status: "failed",
-        errorMessage,
+        errorMessage: msg,
         updatedAt: new Date(),
       })
       .where(eq(incidents.id, incidentId));
@@ -407,17 +274,213 @@ async function markFailed(
     await db.insert(incidentEvents).values({
       incidentId,
       eventType: "error",
-      fromStatus: "analyzing",
+      fromStatus: "open",
       toStatus: "failed",
-      message: errorMessage,
-      metadata: { failedStep },
+      message: `Remediation failed: ${msg}`,
     });
-  } catch (dbErr) {
-    console.error(
-      `[Remediation] Could not update incident ${incidentId} to failed:`,
-      dbErr
-    );
-  }
 
-  return { success: false, errorMessage, failedStep };
+    return { success: false, errorMessage: msg };
+  }
+}
+
+/**
+ * Stage 2: Approve & execute proposal
+ * Commits the approved patch to a new branch on GitHub and opens a Pull Request.
+ */
+export async function executeRemediation(
+  remediationId: string,
+  userId: string
+): Promise<ExecutionResult> {
+  console.log(`[Remediation Execution] Executing remediation ${remediationId}`);
+
+  try {
+    // Load remediation proposal details
+    const remRows = await db
+      .select()
+      .from(remediations)
+      .where(eq(remediations.id, remediationId))
+      .limit(1);
+
+    const remediation = remRows[0];
+    if (!remediation) {
+      return { success: false, errorMessage: "Remediation proposal not found" };
+    }
+
+    if (remediation.status === "success") {
+      return { success: false, errorMessage: "Remediation patch already applied" };
+    }
+
+    const incidentId = remediation.incidentId;
+
+    // Load Incident
+    const incRows = await db
+      .select()
+      .from(incidents)
+      .where(eq(incidents.id, incidentId))
+      .limit(1);
+
+    const incident = incRows[0];
+    if (!incident) {
+      return { success: false, errorMessage: "Incident not found" };
+    }
+
+    // Load user settings
+    const settingsRows = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+
+    const settings = settingsRows[0];
+    const githubToken = decryptOptional(settings?.githubAccessToken);
+    const installationId = settings?.githubInstallationId;
+
+    // Fetch repository
+    let repoOwner: string | null = null;
+    let repoName: string | null = null;
+    let defaultBranch = "main";
+
+    if (settings?.defaultRepository) {
+      const repoRows = await db
+        .select()
+        .from(repositories)
+        .where(eq(repositories.id, settings.defaultRepository))
+        .limit(1);
+
+      if (repoRows[0]) {
+        repoOwner = repoRows[0].owner;
+        repoName = repoRows[0].name;
+        defaultBranch = repoRows[0].defaultBranch ?? "main";
+      }
+    }
+
+    if ((!githubToken && !installationId) || !repoOwner || !repoName) {
+      return {
+        success: false,
+        errorMessage: "No GitHub credentials or repository configured.",
+      };
+    }
+
+    const octokit = makeOctokit({ token: githubToken, installationId });
+    const targetFile = remediation.targetFile ?? "app.py";
+    const patchedCode = remediation.patchedCode;
+
+    if (!patchedCode) {
+      return { success: false, errorMessage: "No patched code generated in proposal." };
+    }
+
+    // Fetch latest file SHA to ensure no drift
+    const fileData = await fetchFileFromRepo(
+      octokit,
+      repoOwner,
+      repoName,
+      targetFile,
+      defaultBranch
+    );
+    const fileSha = fileData.sha;
+
+    // Execute Git actions: Create branch -> Commit patched code -> Open Pull Request
+    const branchName = `aegis-fix-${incidentId.slice(0, 8)}-${Date.now()}`;
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+    await createBranch(octokit, repoOwner, repoName, branchName, defaultBranch);
+
+    await commitFileToRepo(
+      octokit,
+      repoOwner,
+      repoName,
+      targetFile,
+      patchedCode,
+      fileSha,
+      `fix(aegis): patch code issue in ${targetFile}`,
+      branchName
+    );
+
+    const prBody = buildPRBody({
+      incidentId,
+      probeId: incident.probeId,
+      issueType: incident.issueType ?? "Incident",
+      cpuUsage: incident.errorMessage ? 0 : 90, // mock or fetch from metrics if needed
+      memoryUsage: incident.errorMessage ? 0 : 95,
+      targetFile,
+      explanation: remediation.explanation ?? "AI code correction applied.",
+      appUrl,
+    });
+
+    const { url: prUrl, number: prNumber } = await createPullRequest(
+      octokit,
+      repoOwner,
+      repoName,
+      {
+        title: `🛡️ Aegis Fix: ${incident.title?.slice(0, 60) ?? "Auto patch"}`,
+        body: prBody,
+        head: branchName,
+        base: defaultBranch,
+      }
+    );
+
+    // Save final status
+    await db
+      .update(remediations)
+      .set({
+        status: "success",
+        prUrl,
+        prNumber,
+        branchName,
+        completedAt: new Date(),
+      })
+      .where(eq(remediations.id, remediationId));
+
+    await db
+      .update(incidents)
+      .set({
+        status: "resolved",
+        prUrl,
+        prNumber,
+        branchName,
+        updatedAt: new Date(),
+        resolvedAt: new Date(),
+      })
+      .where(eq(incidents.id, incidentId));
+
+    await db.insert(incidentEvents).values({
+      incidentId,
+      eventType: "pr_created",
+      fromStatus: "open",
+      toStatus: "resolved",
+      message: `PR created and approved: ${prUrl}`,
+      metadata: { prUrl, prNumber, branchName, targetFile },
+    });
+
+    // Write audit log
+    await db.insert(auditLogs).values({
+      userId,
+      action: "approve_patch",
+      resourceType: "remediation",
+      resourceId: remediationId,
+      metadata: { incidentId, prUrl, prNumber, branchName, targetFile },
+    });
+
+    return {
+      success: true,
+      prUrl,
+      prNumber,
+      branchName,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Remediation Execution] Execution failed: ${msg}`);
+    return { success: false, errorMessage: msg };
+  }
+}
+
+/**
+ * Backward compatibility stub
+ */
+export async function remediateIncident(
+  params: RemediationParams
+): Promise<{ success: boolean; prUrl?: string }> {
+  // Dispatches proposal generation and lets the user approve it manually via dashboard
+  const res = await generateRemediationProposal(params);
+  return { success: res.success };
 }

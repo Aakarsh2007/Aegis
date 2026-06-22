@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { incidents, incidentEvents, systemMetrics } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
-import { remediateIncident } from "@/lib/remediation";
+import { generateRemediationProposal } from "@/lib/remediation";
 
 const CPU_THRESHOLD = parseFloat(process.env.CPU_THRESHOLD ?? "80");
 const MEM_THRESHOLD = parseFloat(process.env.MEM_THRESHOLD ?? "90");
@@ -90,8 +90,8 @@ export async function evaluateThresholds(
     message: "AI remediation dispatched",
   });
 
-  // Fire-and-forget remediation
-  void remediateIncident({
+  // Fire-and-forget remediation proposal
+  void generateRemediationProposal({
     incidentId,
     userId,
     probeId,
@@ -100,7 +100,7 @@ export async function evaluateThresholds(
     issueType,
     stackTrace,
   }).catch((err) =>
-    console.error(`[Remediation] Unhandled error for incident ${incidentId}:`, err)
+    console.error(`[Remediation Proposal] Unhandled error for incident ${incidentId}:`, err)
   );
 
   return incidentId;

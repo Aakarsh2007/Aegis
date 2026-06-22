@@ -29,7 +29,7 @@ __pycache__/
 ai_agent/.venv/
 
 # Drizzle generated migrations (committed only when intentional)
-aegis-app/drizzle/migrations/*.sql
+# aegis-app/drizzle/migrations/*.sql
 
 # OS
 .DS_Store

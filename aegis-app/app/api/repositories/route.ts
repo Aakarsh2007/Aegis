@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { repositories } from "@/lib/db/schema";
+import { repositories, userSettings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { AddRepositorySchema } from "@/lib/validations";
 import { headers } from "next/headers";
@@ -54,6 +54,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const fullName = `${owner}/${name}`;
 
   try {
+    const settingsRows = await db
+      .select({ githubInstallationId: userSettings.githubInstallationId })
+      .from(userSettings)
+      .where(eq(userSettings.userId, session.user.id))
+      .limit(1);
+
+    const githubInstallationId = settingsRows[0]?.githubInstallationId ?? null;
+
     const [repo] = await db
       .insert(repositories)
       .values({
@@ -62,6 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         name,
         fullName,
         defaultBranch,
+        githubInstallationId,
         isActive: true,
       })
       .returning();
