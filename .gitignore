@@ -1,6 +1,6 @@
 # Build artifacts
-probe
-aegis-probe
+/probe
+/aegis-probe
 *.o
 
 # Logs
