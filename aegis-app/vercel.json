@@ -2,6 +2,8 @@
   "buildCommand": "pnpm run build",
   "outputDirectory": ".next",
   "framework": "nextjs",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "github": {
+    "silent": true
+  }
 }
-
