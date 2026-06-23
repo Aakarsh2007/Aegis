@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 
 // Routes that the C++ probe uses — skip session checks entirely
 const PROBE_PATHS = [
@@ -41,22 +40,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // For dashboard routes, check session
-  if (
-    pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/incidents") ||
-    pathname.startsWith("/repositories") ||
-    pathname.startsWith("/probes") ||
-    pathname.startsWith("/settings") ||
-    pathname.startsWith("/onboarding")
-  ) {
-    const session = await auth.api.getSession({ headers: request.headers });
+  // For protected routes, check for session cookie presence.
+  // The actual session validation happens server-side in the layout/API routes.
+  // This lightweight check avoids importing Better Auth (which uses Node.js APIs
+  // incompatible with Edge Runtime) and simply redirects unauthenticated users.
+  const sessionToken =
+    request.cookies.get("better-auth.session_token")?.value ||
+    request.cookies.get("__Secure-better-auth.session_token")?.value;
 
-    if (!session?.user) {
-      const loginUrl = new URL("/login", request.url);
-      loginUrl.searchParams.set("redirect", pathname);
-      return NextResponse.redirect(loginUrl);
-    }
+  if (!sessionToken) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
