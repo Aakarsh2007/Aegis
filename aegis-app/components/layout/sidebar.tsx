@@ -1,21 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard, AlertTriangle, GitBranch, Cpu, Settings,
-  Shield, Zap, LogOut, BookOpen,
+  LayoutDashboard, AlertTriangle, GitBranch, Cpu,
+  Settings, Shield, Zap, LogOut, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOut } from "@/lib/auth-client";
-import { useRouter } from "next/navigation";
+import { HelpDialog } from "@/components/layout/help-dialog";
 
 const navItems = [
-  { href: "/dashboard",     label: "Dashboard",    icon: LayoutDashboard },
-  { href: "/incidents",     label: "Incidents",    icon: AlertTriangle },
-  { href: "/repositories",  label: "Repositories", icon: GitBranch },
-  { href: "/probes",        label: "Probes",       icon: Cpu },
-  { href: "/settings",      label: "Settings",     icon: Settings },
+  { href: "/dashboard",    label: "Dashboard",    icon: LayoutDashboard },
+  { href: "/incidents",    label: "Incidents",    icon: AlertTriangle },
+  { href: "/repositories", label: "Repositories", icon: GitBranch },
+  { href: "/probes",       label: "Probes",       icon: Cpu },
+  { href: "/settings",     label: "Settings",     icon: Settings },
 ];
 
 export function Sidebar() {
@@ -30,7 +30,7 @@ export function Sidebar() {
 
   return (
     <aside className="fixed left-0 top-0 h-full w-60 border-r bg-card flex flex-col z-40">
-      {/* Logo */}
+      {/* Logo row */}
       <div className="flex items-center gap-2.5 px-5 py-4 border-b">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 border border-primary/30">
           <Shield className="w-4 h-4 text-primary" />
@@ -42,7 +42,7 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Nav */}
+      {/* Nav links */}
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + "/");
@@ -64,8 +64,9 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Bottom */}
+      {/* Bottom actions */}
       <div className="px-3 py-4 border-t space-y-1">
+        {/* Setup Guide */}
         <Link
           href="/onboarding"
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
@@ -73,6 +74,13 @@ export function Sidebar() {
           <BookOpen className="w-4 h-4 shrink-0" />
           Setup Guide
         </Link>
+
+        {/* Help button */}
+        <div className="px-1 py-1">
+          <HelpDialog />
+        </div>
+
+        {/* Sign out */}
         <button
           onClick={handleSignOut}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all"
