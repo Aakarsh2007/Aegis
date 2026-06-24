@@ -23,7 +23,7 @@ Aegis acts as your autonomous SRE and AI engineer. Instead of waiting for users 
 
 ### Core Modes
 - **🔍 Proactive AI Scanner**: Connect your GitHub repository and click "Scan". Aegis will fetch your source code, identify vulnerabilities or performance bottlenecks, and automatically open a PR with the patch. No servers or probes required.
-- **⚡ Live Crash Detection**: Run the lightweight Aegis C++ Probe on your Linux server. It monitors CPU, memory, and application logs in real-time. The moment your app crashes, the probe sends the stack trace to Aegis, which instantly generates a patch and opens a PR.
+- **⚡ Live Crash Detection**: Run the lightweight Aegis C++ Probe on your Linux server. It monitors CPU, memory, and application logs in real-time. The moment your app crashes, the probe sends the stack trace to Aegis, which instantly generates a patch and opens a PR. *(Note: The probe automatically sends Pull Requests to the first repository you connect to Aegis, which acts as your default codebase).*
 
 ---
 
