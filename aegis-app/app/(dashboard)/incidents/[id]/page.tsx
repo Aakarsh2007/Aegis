@@ -159,7 +159,7 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
               <a href={incident.prUrl} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 text-sm font-semibold transition-all whitespace-nowrap">
                 <GitBranch className="w-4 h-4" />
-                View PR on GitHub
+                VIEW AI PATCH
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             )}

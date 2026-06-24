@@ -335,12 +335,28 @@ export async function executeRemediation(
     const githubToken = decryptOptional(settings?.githubAccessToken);
     const installationId = settings?.githubInstallationId;
 
-    // Fetch repository
+    // Fetch repository — prefer the incident's own repositoryId, fall back to defaultRepository
     let repoOwner: string | null = null;
     let repoName: string | null = null;
     let defaultBranch = "main";
 
-    if (settings?.defaultRepository) {
+    // First try the incident's linked repository
+    if (incident.repositoryId) {
+      const repoRows = await db
+        .select()
+        .from(repositories)
+        .where(eq(repositories.id, incident.repositoryId))
+        .limit(1);
+
+      if (repoRows[0]) {
+        repoOwner = repoRows[0].owner;
+        repoName = repoRows[0].name;
+        defaultBranch = repoRows[0].defaultBranch ?? "main";
+      }
+    }
+
+    // Fall back to default repository from settings
+    if (!repoOwner && settings?.defaultRepository) {
       const repoRows = await db
         .select()
         .from(repositories)
@@ -474,13 +490,17 @@ export async function executeRemediation(
   }
 }
 
-/**
- * Backward compatibility stub
- */
 export async function remediateIncident(
   params: RemediationParams
 ): Promise<{ success: boolean; prUrl?: string }> {
-  // Dispatches proposal generation and lets the user approve it manually via dashboard
+  // Generate the patch proposal
   const res = await generateRemediationProposal(params);
+  
+  // If proposal was successful, immediately open the PR on GitHub
+  if (res.success && res.remediationId) {
+    const execRes = await executeRemediation(res.remediationId, params.userId);
+    return { success: execRes.success, prUrl: execRes.prUrl };
+  }
+  
   return { success: res.success };
 }

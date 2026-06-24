@@ -34,6 +34,7 @@ export interface ScanResult {
   filesScanned: number;
   issuesFound: number;
   incidentIds: string[];
+  prUrls: string[];
   errorMessage?: string;
 }
 
@@ -187,6 +188,7 @@ export async function scanRepository(
   repositoryId: string
 ): Promise<ScanResult> {
   const incidentIds: string[] = [];
+  const prUrls: string[] = [];
 
   try {
     // Load repository
@@ -197,7 +199,7 @@ export async function scanRepository(
       .limit(1);
 
     if (repoRows.length === 0) {
-      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, errorMessage: "Repository not found" };
+      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, prUrls, errorMessage: "Repository not found" };
     }
 
     const repo = repoRows[0];
@@ -214,7 +216,7 @@ export async function scanRepository(
     const geminiKey = decryptOptional(settings?.geminiApiKey);
 
     if (!githubToken && !settings?.githubInstallationId) {
-      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, errorMessage: "No GitHub credentials configured. Add a GitHub token in Settings." };
+      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, prUrls, errorMessage: "No GitHub credentials configured. Add a GitHub token in Settings." };
     }
 
     const octokit = makeOctokit({ token: githubToken, installationId: settings?.githubInstallationId });
@@ -226,7 +228,7 @@ export async function scanRepository(
     // Step 1: Get file tree
     const allFiles = await fetchRepoTree(octokit, repo.owner, repo.name, branch);
     if (allFiles.length === 0) {
-      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, errorMessage: "No source files found in repository or branch not accessible." };
+      return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, prUrls, errorMessage: "No source files found in repository or branch not accessible." };
     }
 
     console.log(`[Scanner] Found ${allFiles.length} source files`);
@@ -295,9 +297,9 @@ export async function scanRepository(
           metadata: { filePath, issueType: issue.issueType, confidence: issue.confidenceScore },
         });
 
-        // Auto-generate patch for critical issues
-        if (issue.severity === "critical" && issue.confidenceScore > 0.65) {
-          void autoGeneratePatch(
+        // Auto-generate patch for ALL issues found during scan
+        try {
+          const patchResult = await autoGeneratePatch(
             userId,
             incident.id,
             filePath,
@@ -309,7 +311,12 @@ export async function scanRepository(
             genai,
             branch,
             settings
-          ).catch((err) => console.error(`[Scanner] Patch gen failed for ${filePath}:`, err));
+          );
+          if (patchResult?.prUrl) {
+            prUrls.push(patchResult.prUrl);
+          }
+        } catch (err) {
+          console.error(`[Scanner] Patch gen failed for ${filePath}:`, err);
         }
       } catch (fileErr) {
         console.error(`[Scanner] Could not analyze ${filePath}:`, fileErr);
@@ -322,11 +329,12 @@ export async function scanRepository(
       filesScanned,
       issuesFound,
       incidentIds,
+      prUrls,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Scanner] Fatal error:", msg);
-    return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, errorMessage: msg };
+    return { success: false, repositoryId, filesScanned: 0, issuesFound: 0, incidentIds, prUrls, errorMessage: msg };
   }
 }
 
@@ -345,7 +353,7 @@ async function autoGeneratePatch(
   genai: GoogleGenAI,
   branch: string,
   settings: { slackWebhookUrl?: string | null; discordWebhookUrl?: string | null } | undefined
-): Promise<void> {
+): Promise<{ prUrl?: string }> {
   const { generateCodePatch, calculateConfidenceScore } = await import("@/lib/gemini");
 
   // Update incident to analyzing
@@ -375,6 +383,9 @@ async function autoGeneratePatch(
     originalSize: originalCode.length,
   });
 
+  // Generate diff for the patch viewer
+  const patchDiff = generateSimpleDiff(originalCode, patchResult.patchedCode, filePath);
+
   // Create remediation record
   const [remediationRecord] = await db
     .insert(remediations)
@@ -384,6 +395,7 @@ async function autoGeneratePatch(
       targetFile: filePath,
       originalCode,
       patchedCode: patchResult.patchedCode,
+      patchDiff,
       confidenceScore,
       explanation: patchResult.explanation,
       rollbackNotes: patchResult.rollbackNotes,
@@ -391,7 +403,7 @@ async function autoGeneratePatch(
     })
     .returning({ id: remediations.id });
 
-  // Create branch and PR
+  // Always auto-create the PR so the user can review it on GitHub
   const { createBranch, commitFileToRepo, createPullRequest, buildPRBody } = await import("@/lib/github");
   const branchName = `aegis-scan-fix-${incidentId.slice(0, 8)}-${Date.now()}`;
   const defaultBranch = repo.defaultBranch ?? "main";
@@ -426,7 +438,7 @@ async function autoGeneratePatch(
     }
   );
 
-  // Update records
+  // Update records — mark as resolved with PR
   await db.update(remediations).set({ status: "success", prUrl, prNumber, branchName, completedAt: new Date() }).where(eq(remediations.id, remediationRecord.id));
   await db.update(incidents).set({
     status: "resolved", prUrl, prNumber, branchName,
@@ -444,4 +456,32 @@ async function autoGeneratePatch(
   });
 
   console.log(`[Scanner] ✅ Auto-patch PR created: ${prUrl}`);
+  return { prUrl };
+}
+
+/**
+ * Simple diff helper for scan patches
+ */
+function generateSimpleDiff(original: string, patched: string, filename: string): string {
+  const origLines = original.split("\n");
+  const patchLines = patched.split("\n");
+  let diff = `--- a/${filename}\n+++ b/${filename}\n`;
+
+  let i = 0, j = 0;
+  while (i < origLines.length || j < patchLines.length) {
+    if (i < origLines.length && j < patchLines.length && origLines[i] === patchLines[j]) {
+      diff += `  ${origLines[i]}\n`;
+      i++; j++;
+    } else {
+      if (i < origLines.length) {
+        diff += `- ${origLines[i]}\n`;
+        i++;
+      }
+      if (j < patchLines.length) {
+        diff += `+ ${patchLines[j]}\n`;
+        j++;
+      }
+    }
+  }
+  return diff;
 }
