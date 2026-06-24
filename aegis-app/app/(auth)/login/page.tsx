@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signIn } from "@/lib/auth-client";
-import { Github, Shield, Mail, Lock, Loader2, AlertCircle } from "lucide-react";
+import { Shield, Mail, Lock, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [githubLoading, setGithubLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
@@ -36,16 +35,7 @@ export default function LoginPage() {
     }
   }
 
-  async function handleGithubLogin() {
-    setGithubLoading(true);
-    setError("");
-    try {
-      await signIn.social({ provider: "github", callbackURL: "/dashboard" });
-    } catch {
-      setError("GitHub login failed.");
-      setGithubLoading(false);
-    }
-  }
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
@@ -75,25 +65,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            onClick={handleGithubLogin}
-            disabled={githubLoading || loading}
-          >
-            {githubLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
-            Continue with GitHub
-          </Button>
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">or</span>
-            </div>
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
@@ -126,7 +98,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" disabled={loading || githubLoading}>
+            <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? "Signing in…" : "Sign in"}
             </Button>

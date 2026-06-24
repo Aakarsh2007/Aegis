@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { scanRepository } from "@/lib/repo-scanner";
 import { headers } from "next/headers";
 
+export const maxDuration = 60;
+
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

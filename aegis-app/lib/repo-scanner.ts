@@ -243,7 +243,7 @@ export async function scanRepository(
     let issuesFound = 0;
 
     // Step 3: Analyze each selected file
-    for (const filePath of targetFiles.slice(0, 10)) {
+    for (const filePath of targetFiles.slice(0, 2)) {
       try {
         // Fetch file content
         const fileResponse = await octokit.repos.getContent({
@@ -366,97 +366,119 @@ async function autoGeneratePatch(
     message: "AI generating patch for detected issue",
   });
 
-  const patchResult = await generateCodePatch(genai, {
-    originalCode,
-    issueType: issue.issueType,
-    cpuUsage: 0,
-    memoryUsage: 0,
-    stackTrace: `Issue found during proactive scan: ${issue.description}\nSuggestion: ${issue.suggestion}`,
-    filename: filePath,
-  });
-
-  const confidenceScore = calculateConfidenceScore({
-    hasStackTrace: true,
-    stackTraceLength: issue.description.length,
-    filenameExplicit: true,
-    patchSize: patchResult.patchedCode.length,
-    originalSize: originalCode.length,
-  });
-
-  // Generate diff for the patch viewer
-  const patchDiff = generateSimpleDiff(originalCode, patchResult.patchedCode, filePath);
-
-  // Create remediation record
-  const [remediationRecord] = await db
-    .insert(remediations)
-    .values({
-      incidentId,
-      status: "pending_review",
-      targetFile: filePath,
+  try {
+    const patchResult = await generateCodePatch(genai, {
       originalCode,
-      patchedCode: patchResult.patchedCode,
-      patchDiff,
-      confidenceScore,
-      explanation: patchResult.explanation,
-      rollbackNotes: patchResult.rollbackNotes,
-      geminiModel: "gemini-2.5-flash",
-    })
-    .returning({ id: remediations.id });
+      issueType: issue.issueType,
+      cpuUsage: 0,
+      memoryUsage: 0,
+      stackTrace: `Issue found during proactive scan: ${issue.description}\nSuggestion: ${issue.suggestion}`,
+      filename: filePath,
+    });
 
-  // Always auto-create the PR so the user can review it on GitHub
-  const { createBranch, commitFileToRepo, createPullRequest, buildPRBody } = await import("@/lib/github");
-  const branchName = `aegis-scan-fix-${incidentId.slice(0, 8)}-${Date.now()}`;
-  const defaultBranch = repo.defaultBranch ?? "main";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const confidenceScore = calculateConfidenceScore({
+      hasStackTrace: true,
+      stackTraceLength: issue.description.length,
+      filenameExplicit: true,
+      patchSize: patchResult.patchedCode.length,
+      originalSize: originalCode.length,
+    });
 
-  await createBranch(octokit, repo.owner, repo.name, branchName, defaultBranch);
-  await commitFileToRepo(
-    octokit, repo.owner, repo.name, filePath,
-    patchResult.patchedCode, fileSha,
-    `fix(aegis-scan): ${issue.issueType} in ${filePath}`,
-    branchName
-  );
+    // Generate diff for the patch viewer
+    const patchDiff = generateSimpleDiff(originalCode, patchResult.patchedCode, filePath);
 
-  const prBody = buildPRBody({
-    incidentId,
-    probeId: "ai-scanner",
-    issueType: issue.issueType,
-    cpuUsage: 0,
-    memoryUsage: 0,
-    targetFile: filePath,
-    explanation: `**Found by AI Proactive Scan**\n\n${patchResult.explanation}`,
-    appUrl,
-  });
+    // Create remediation record
+    const [remediationRecord] = await db
+      .insert(remediations)
+      .values({
+        incidentId,
+        status: "pending_review",
+        targetFile: filePath,
+        originalCode,
+        patchedCode: patchResult.patchedCode,
+        patchDiff,
+        confidenceScore,
+        explanation: patchResult.explanation,
+        rollbackNotes: patchResult.rollbackNotes,
+        geminiModel: "gemini-2.5-flash",
+      })
+      .returning({ id: remediations.id });
 
-  const { url: prUrl, number: prNumber } = await createPullRequest(
-    octokit, repo.owner, repo.name,
-    {
-      title: `🛡️ Aegis Scan Fix: ${issue.issueType} in ${filePath}`,
-      body: prBody,
-      head: branchName,
-      base: defaultBranch,
-    }
-  );
+    // Always auto-create the PR so the user can review it on GitHub
+    const { createBranch, commitFileToRepo, createPullRequest, buildPRBody } = await import("@/lib/github");
+    const branchName = `aegis-scan-fix-${incidentId.slice(0, 8)}-${Date.now()}`;
+    const defaultBranch = repo.defaultBranch ?? "main";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-  // Update records — mark as resolved with PR
-  await db.update(remediations).set({ status: "success", prUrl, prNumber, branchName, completedAt: new Date() }).where(eq(remediations.id, remediationRecord.id));
-  await db.update(incidents).set({
-    status: "resolved", prUrl, prNumber, branchName,
-    aiConfidenceScore: confidenceScore,
-    updatedAt: new Date(), resolvedAt: new Date()
-  }).where(eq(incidents.id, incidentId));
+    await createBranch(octokit, repo.owner, repo.name, branchName, defaultBranch);
+    await commitFileToRepo(
+      octokit, repo.owner, repo.name, filePath,
+      patchResult.patchedCode, fileSha,
+      `fix(aegis-scan): ${issue.issueType} in ${filePath}`,
+      branchName
+    );
 
-  await db.insert(incidentEvents).values({
-    incidentId,
-    eventType: "pr_created",
-    fromStatus: "analyzing",
-    toStatus: "resolved",
-    message: `AI scan patch PR created: ${prUrl}`,
-    metadata: { prUrl, prNumber, branchName },
-  });
+    const prBody = buildPRBody({
+      incidentId,
+      probeId: "ai-scanner",
+      issueType: issue.issueType,
+      cpuUsage: 0,
+      memoryUsage: 0,
+      targetFile: filePath,
+      explanation: `**Found by AI Proactive Scan**\n\n${patchResult.explanation}`,
+      appUrl,
+    });
 
-  console.log(`[Scanner] ✅ Auto-patch PR created: ${prUrl}`);
-  return { prUrl };
+    const { url: prUrl, number: prNumber } = await createPullRequest(
+      octokit, repo.owner, repo.name,
+      {
+        title: `🛡️ Aegis Scan Fix: ${issue.issueType} in ${filePath}`,
+        body: prBody,
+        head: branchName,
+        base: defaultBranch,
+      }
+    );
+
+    // Update records — mark as resolved with PR
+    await db.update(remediations).set({ status: "success", prUrl, prNumber, branchName, completedAt: new Date() }).where(eq(remediations.id, remediationRecord.id));
+    await db.update(incidents).set({
+      status: "resolved", prUrl, prNumber, branchName,
+      aiConfidenceScore: confidenceScore,
+      updatedAt: new Date(), resolvedAt: new Date()
+    }).where(eq(incidents.id, incidentId));
+
+    await db.insert(incidentEvents).values({
+      incidentId,
+      eventType: "pr_created",
+      fromStatus: "analyzing",
+      toStatus: "resolved",
+      message: `AI scan patch PR created: ${prUrl}`,
+      metadata: { prUrl, prNumber, branchName },
+    });
+
+    console.log(`[Scanner] ✅ Auto-patch PR created: ${prUrl}`);
+    return { prUrl };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Scanner] Auto-patch failed for ${filePath}:`, msg);
+    
+    // Update incident to failed so it doesn't get stuck in analyzing
+    await db.update(incidents).set({
+      status: "failed",
+      errorMessage: msg,
+      updatedAt: new Date()
+    }).where(eq(incidents.id, incidentId));
+    
+    await db.insert(incidentEvents).values({
+      incidentId,
+      eventType: "error",
+      fromStatus: "analyzing",
+      toStatus: "failed",
+      message: `Failed to generate patch: ${msg}`,
+    });
+    
+    throw err;
+  }
 }
 
 /**
