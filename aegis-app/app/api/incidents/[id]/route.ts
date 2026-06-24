@@ -52,3 +52,40 @@ export async function GET(
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const userId = session.user.id;
+
+  try {
+    // Verify incident belongs to user before deleting
+    const incidentRows = await db
+      .select({ id: incidents.id })
+      .from(incidents)
+      .where(and(eq(incidents.id, id), eq(incidents.userId, userId)))
+      .limit(1);
+
+    if (incidentRows.length === 0) {
+      return NextResponse.json({ error: "Incident not found" }, { status: 404 });
+    }
+
+    // Delete cascading records first (events & remediations reference incidentId)
+    // Schema has onDelete: "cascade" so this is handled automatically
+    await db
+      .delete(incidents)
+      .where(and(eq(incidents.id, id), eq(incidents.userId, userId)));
+
+    return NextResponse.json({ message: "Incident deleted" });
+  } catch (err) {
+    console.error("[Delete Incident] Error:", err);
+    return NextResponse.json({ error: "Failed to delete incident" }, { status: 500 });
+  }
+}

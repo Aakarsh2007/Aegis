@@ -3,15 +3,17 @@
 import { use, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ExternalLink, Clock, AlertTriangle, CheckCircle2,
-  XCircle, Loader2, GitBranch, Terminal, Brain, RotateCcw, Check,
+  XCircle, Loader2, GitBranch, Terminal, Brain, RotateCcw, Check, Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn, relativeTime } from "@/lib/utils";
 
 const statusConfig = {
@@ -44,8 +46,11 @@ function DiffViewer({ diff }: { diff: string }) {
 export default function IncidentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const qc = useQueryClient();
+  const router = useRouter();
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["incident", id],
@@ -77,6 +82,20 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/incidents/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["incidents"] });
+        router.push("/incidents");
+      }
+    } finally {
+      setDeleting(false);
+      setShowDeleteDialog(false);
+    }
+  };
+
   if (isLoading) return (
     <div className="space-y-4 animate-fade-in">
       <Skeleton className="h-8 w-40" />
@@ -100,9 +119,20 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <Link href="/incidents" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-        <ArrowLeft className="w-4 h-4" /> Back to incidents
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link href="/incidents" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="w-4 h-4" /> Back to incidents
+        </Link>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={() => setShowDeleteDialog(true)}
+        >
+          <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+          Delete
+        </Button>
+      </div>
 
       {/* Header */}
       <Card>
@@ -217,6 +247,25 @@ export default function IncidentDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete incident?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove this incident and all associated events and remediations. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-2">
+            <Button variant="outline" className="flex-1" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button variant="destructive" className="flex-1" disabled={deleting} onClick={handleDelete}>
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 

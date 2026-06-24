@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { GitBranch, Plus, Loader2, AlertCircle, Check, Scan, Zap, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { GitBranch, Plus, Loader2, AlertCircle, Check, Scan, Zap, ExternalLink, Trash2, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,8 @@ export default function RepositoriesPage() {
   const [error, setError] = useState("");
   const [scanResults, setScanResults] = useState<Record<string, ScanResult>>({});
   const [scanningId, setScanningId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Repository | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["repositories"],
@@ -77,6 +80,19 @@ export default function RepositoriesPage() {
       setScanResults((prev) => ({ ...prev, [repoId]: { success: false, filesScanned: 0, issuesFound: 0, incidentIds: [], message: "Scan failed" } }));
     } finally {
       setScanningId(null);
+    }
+  }
+
+  async function handleDelete(repo: Repository) {
+    setDeletingId(repo.id);
+    try {
+      const res = await fetch(`/api/repositories/${repo.id}`, { method: "DELETE" });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["repositories"] });
+      }
+    } finally {
+      setDeletingId(null);
+      setConfirmDelete(null);
     }
   }
 
@@ -152,6 +168,14 @@ export default function RepositoriesPage() {
                       {repo.fullName}
                       <ExternalLink className="w-3 h-3 shrink-0" />
                     </a>
+                    {/* Delete button */}
+                    <button
+                      onClick={() => setConfirmDelete(repo)}
+                      className="ml-auto p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      title="Delete repository"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -167,13 +191,37 @@ export default function RepositoriesPage() {
 
                   {/* Scan result */}
                   {result && (
-                    <div className={`text-xs rounded-lg px-3 py-2 ${result.issuesFound > 0 ? "bg-amber-500/10 border border-amber-500/20 text-amber-400" : result.success ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-muted text-muted-foreground"}`}>
-                      {result.success
-                        ? result.issuesFound > 0
-                          ? `🔍 Found ${result.issuesFound} issue${result.issuesFound > 1 ? "s" : ""} in ${result.filesScanned} files — check Incidents`
-                          : `✅ Scanned ${result.filesScanned} files — no issues found`
-                        : `❌ ${result.message}`
-                      }
+                    <div className={`text-xs rounded-lg px-3 py-2 space-y-2 ${result.issuesFound > 0 ? "bg-amber-500/10 border border-amber-500/20 text-amber-400" : result.success ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400" : "bg-muted text-muted-foreground"}`}>
+                      <p>
+                        {result.success
+                          ? result.issuesFound > 0
+                            ? `🔍 Found ${result.issuesFound} issue${result.issuesFound > 1 ? "s" : ""} in ${result.filesScanned} files`
+                            : `✅ Scanned ${result.filesScanned} files — no issues found`
+                          : `❌ ${result.message}`
+                        }
+                      </p>
+
+                      {/* Show links to view incidents and PRs */}
+                      {result.success && result.issuesFound > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <Link
+                            href="/incidents"
+                            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 transition-colors"
+                          >
+                            <ArrowRight className="w-3 h-3" />
+                            View Incidents
+                          </Link>
+                          {result.incidentIds?.length > 0 && (
+                            <Link
+                              href={`/incidents/${result.incidentIds[0]}`}
+                              className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 transition-colors"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Open Latest Issue
+                            </Link>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -197,6 +245,7 @@ export default function RepositoriesPage() {
         </div>
       )}
 
+      {/* Add repo dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -245,6 +294,42 @@ export default function RepositoriesPage() {
               Connect
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!confirmDelete} onOpenChange={() => setConfirmDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete repository?</DialogTitle>
+            <DialogDescription>
+              This will remove{" "}
+              <span className="font-mono font-semibold">{confirmDelete?.fullName}</span> from Aegis.
+              Associated incidents will remain. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setConfirmDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={deletingId === confirmDelete?.id}
+              onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            >
+              {deletingId === confirmDelete?.id ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              Delete
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

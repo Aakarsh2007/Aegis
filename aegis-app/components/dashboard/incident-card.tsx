@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, XCircle, Loader2, Clock, ExternalLink } from "lucide-react";
+import { AlertTriangle, CheckCircle2, XCircle, Loader2, Clock, ExternalLink, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -23,7 +23,7 @@ const statusConfig = {
   ignored:   { icon: XCircle,       badge: "secondary" as const, label: "Ignored"   },
 };
 
-export function IncidentCard({ incident }: { incident: Incident }) {
+export function IncidentCard({ incident, onDelete }: { incident: Incident; onDelete?: () => void }) {
   const cfg = statusConfig[incident.status as keyof typeof statusConfig] ?? statusConfig.open;
   const Icon = cfg.icon;
   const isAnalyzing = incident.status === "analyzing";
@@ -47,9 +47,21 @@ export function IncidentCard({ incident }: { incident: Incident }) {
             Probe: <span className="font-mono">{incident.probeId}</span>
           </p>
         </div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-          <Clock className="w-3 h-3" />
-          {relativeTime(incident.createdAt)}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Clock className="w-3 h-3" />
+            {relativeTime(incident.createdAt)}
+          </div>
+          {/* Delete button */}
+          {onDelete && (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+              className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete incident"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

@@ -1,18 +1,34 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Filter } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Filter, Trash2, Loader2 } from "lucide-react";
 import { IncidentCard } from "@/components/dashboard/incident-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const STATUSES = ["all", "open", "analyzing", "resolved", "failed"] as const;
 
+interface Incident {
+  id: string;
+  status: string;
+  severity: string;
+  title: string | null;
+  probeId: string;
+  prUrl: string | null;
+  errorMessage: string | null;
+  createdAt: Date | string | null;
+  aiConfidenceScore: number | null;
+}
+
 export default function IncidentsPage() {
+  const qc = useQueryClient();
   const [status, setStatus] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Incident | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["incidents", status, page],
@@ -20,6 +36,19 @@ export default function IncidentsPage() {
       fetch(`/api/incidents?status=${status}&page=${page}&limit=12`).then((r) => r.json()),
     refetchInterval: 5000,
   });
+
+  async function handleDelete(incident: Incident) {
+    setDeletingId(incident.id);
+    try {
+      const res = await fetch(`/api/incidents/${incident.id}`, { method: "DELETE" });
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["incidents"] });
+      }
+    } finally {
+      setDeletingId(null);
+      setConfirmDelete(null);
+    }
+  }
 
   const incidents = data?.incidents ?? [];
   const hasMore = data?.pagination?.hasMore ?? false;
@@ -60,8 +89,12 @@ export default function IncidentsPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {incidents.map((incident: Parameters<typeof IncidentCard>[0]["incident"]) => (
-                <IncidentCard key={incident.id} incident={incident} />
+              {incidents.map((incident: Incident) => (
+                <IncidentCard
+                  key={incident.id}
+                  incident={incident}
+                  onDelete={() => setConfirmDelete(incident)}
+                />
               ))}
             </div>
           )}
@@ -79,6 +112,42 @@ export default function IncidentsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!confirmDelete} onOpenChange={() => setConfirmDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete incident?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove incident{" "}
+              <span className="font-mono font-semibold">#{confirmDelete?.id.slice(0, 8)}</span> and its
+              associated events and remediations. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setConfirmDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={deletingId === confirmDelete?.id}
+              onClick={() => confirmDelete && handleDelete(confirmDelete)}
+            >
+              {deletingId === confirmDelete?.id ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
