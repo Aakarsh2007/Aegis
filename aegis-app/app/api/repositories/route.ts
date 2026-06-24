@@ -75,6 +75,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       })
       .returning();
 
+    // Check if user has no default repository, and set this one
+    const userSet = await db.select({ defaultRepository: userSettings.defaultRepository }).from(userSettings).where(eq(userSettings.userId, session.user.id)).limit(1);
+    if (!userSet[0]?.defaultRepository) {
+      await db.update(userSettings).set({ defaultRepository: repo.id }).where(eq(userSettings.userId, session.user.id));
+    }
+
     return NextResponse.json({ repository: repo }, { status: 201 });
   } catch (err: unknown) {
     const pgErr = err as { code?: string };

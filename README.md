@@ -11,6 +11,8 @@
 
 *Aegis finds bugs, memory leaks, and security vulnerabilities in your codebase, analyzes them, and automatically opens GitHub Pull Requests with AI-generated fixes — before a crash ever happens.*
 
+**🌍 Live Demo:** [aegis-ai-sre.vercel.app](https://aegis-ai-sre.vercel.app)
+
 </div>
 
 ---
@@ -59,6 +61,20 @@ During deployment, Vercel will ask for the following Environment Variables:
 3. Go to **Repositories**, click **Connect Repo**, and enter your GitHub username and repository name.
 4. Click **Scan for issues**.
 5. Aegis will run in the background. Navigate to **Incidents** to watch issues populate and PRs automatically get created in your GitHub!
+
+### 4. Setup Live Probe (Optional)
+If you want Aegis to monitor your production servers for crashes in real-time:
+1. Generate an API key from the **Settings > API Keys** page.
+2. Compile and run the standalone C++ probe on your Linux server:
+```bash
+g++ main.cpp -o aegis-probe -pthread -std=c++17
+./aegis-probe \
+  --endpoint  https://your-aegis-url.vercel.app \
+  --api-key   aegis_YOUR_KEY_HERE \
+  --log-file  /var/log/app/error.log \
+  --probe-id  prod-server-1 \
+  --interval  5
+```
 
 ---
 
