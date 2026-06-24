@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  ...(process.env.NEXT_STANDALONE === "true" ? { output: "standalone" } : {}),
+  // Tell Next.js to not bundle these Node.js-only packages (used by better-auth)
   serverExternalPackages: ["@node-rs/argon2", "@node-rs/bcrypt"],
   images: {
     remotePatterns: [

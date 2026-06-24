@@ -13,13 +13,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   let body: unknown;
-  try { body = await request.json(); } catch {
+  try {
+    body = await request.json();
+  } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
   const parsed = ProbeHealthSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.errors[0].message }, { status: 400 });
+    return NextResponse.json(
+      { error: parsed.error.errors[0].message },
+      { status: 400 }
+    );
   }
 
   const { probe_id, status, hostname, version } = parsed.data;
@@ -33,22 +38,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .limit(1);
 
     if (existing.length > 0) {
-      await db.update(probes).set({
-        lastSeen: new Date(), status,
-        ...(hostname ? { hostname } : {}),
-        ...(version ? { version } : {}),
-      }).where(and(eq(probes.userId, userId), eq(probes.probeId, probe_id)));
+      await db
+        .update(probes)
+        .set({
+          lastSeen: new Date(),
+          status,
+          ...(hostname ? { hostname } : {}),
+          ...(version ? { version } : {}),
+        })
+        .where(and(eq(probes.userId, userId), eq(probes.probeId, probe_id)));
     } else {
       await db.insert(probes).values({
-        userId, probeId: probe_id, name: probe_id,
-        hostname: hostname ?? null, version: version ?? null,
-        lastSeen: new Date(), status,
+        userId,
+        probeId: probe_id,
+        name: probe_id,
+        hostname: hostname ?? null,
+        version: version ?? null,
+        lastSeen: new Date(),
+        status,
       });
     }
 
     return NextResponse.json({ message: "Heartbeat recorded" });
   } catch (err) {
-    console.error("[Health] Error:", err);
+    console.error("[Probe Health] Error:", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

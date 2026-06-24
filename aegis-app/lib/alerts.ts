@@ -1,59 +1,67 @@
+/**
+ * Alert delivery: Slack, Discord, webhook notifications on incident events.
+ */
+
 interface AlertParams {
   incidentId: string;
   title: string;
-  severity: string;
+  severity: "critical" | "warning" | "info";
   probeId: string;
   issueType: string;
   dashboardUrl: string;
   slackWebhookUrl?: string | null;
   discordWebhookUrl?: string | null;
+  webhookUrl?: string | null;
+  prUrl?: string | null;
 }
 
 export async function sendAlerts(params: AlertParams): Promise<void> {
-  const {
-    incidentId,
-    title,
-    severity,
-    probeId,
-    issueType,
-    dashboardUrl,
-    slackWebhookUrl,
-    discordWebhookUrl,
-  } = params;
+  const promises: Promise<void>[] = [];
 
-  const incidentUrl = `${dashboardUrl}/incidents/${incidentId}`;
+  if (params.slackWebhookUrl) {
+    promises.push(sendSlackAlert(params));
+  }
+  if (params.discordWebhookUrl) {
+    promises.push(sendDiscordAlert(params));
+  }
+  if (params.webhookUrl) {
+    promises.push(sendWebhookAlert(params));
+  }
 
-  // 1. Send Slack Alert
-  if (slackWebhookUrl) {
-    try {
-      const payload = {
+  // Fire all alerts concurrently; failures are logged but don't block the caller
+  const results = await Promise.allSettled(promises);
+  results.forEach((r) => {
+    if (r.status === "rejected") {
+      console.error("[Alerts] Delivery failed:", r.reason);
+    }
+  });
+}
+
+async function sendSlackAlert(params: AlertParams): Promise<void> {
+  if (!params.slackWebhookUrl) return;
+
+  const color = params.severity === "critical" ? "#ef4444" : "#f59e0b";
+  const emoji = params.severity === "critical" ? "🚨" : "⚠️";
+
+  const body = {
+    attachments: [
+      {
+        color,
         blocks: [
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `🚨 *New Incident Detected by Aegis Probe*`,
+              text: `${emoji} *Aegis Alert: ${params.title}*`,
             },
           },
           {
             type: "section",
             fields: [
-              {
-                type: "mrkdwn",
-                text: `*Issue:* ${issueType}`,
-              },
-              {
-                type: "mrkdwn",
-                text: `*Severity:* \`${severity.toUpperCase()}\``,
-              },
-              {
-                type: "mrkdwn",
-                text: `*Probe:* \`${probeId}\``,
-              },
-              {
-                type: "mrkdwn",
-                text: `*Incident ID:* \`${incidentId.slice(0, 8)}\``,
-              },
+              { type: "mrkdwn", text: `*Severity:*\n${params.severity.toUpperCase()}` },
+              { type: "mrkdwn", text: `*Probe:*\n${params.probeId}` },
+              { type: "mrkdwn", text: `*Issue:*\n${params.issueType}` },
+              { type: "mrkdwn", text: `*Incident ID:*\n\`${params.incidentId.slice(0, 8)}\`` },
             ],
           },
           {
@@ -61,75 +69,89 @@ export async function sendAlerts(params: AlertParams): Promise<void> {
             elements: [
               {
                 type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Review AI Patch & Approve",
-                  emoji: true,
-                },
-                value: incidentId,
-                url: incidentUrl,
-                style: "primary",
+                text: { type: "plain_text", text: "View Incident" },
+                url: `${params.dashboardUrl}/incidents/${params.incidentId}`,
+                style: params.severity === "critical" ? "danger" : "primary",
               },
+              ...(params.prUrl
+                ? [{ type: "button", text: { type: "plain_text", text: "View AI Patch" }, url: params.prUrl }]
+                : []),
             ],
           },
         ],
-      };
+      },
+    ],
+  };
 
-      await fetch(slackWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      console.log(`[Alerts] Slack notification sent for incident ${incidentId}`);
-    } catch (err) {
-      console.error("[Alerts] Failed to send Slack notification:", err);
-    }
+  const res = await fetch(params.slackWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Slack returned ${res.status}`);
   }
+}
 
-  // 2. Send Discord Alert
-  if (discordWebhookUrl) {
-    try {
-      const color = severity === "critical" ? 15158332 : 15105570; // Red or Orange
-      const payload = {
-        embeds: [
-          {
-            title: `🛡️ Aegis Incident Alert: ${issueType}`,
-            description: `Aegis has detected a system issue and generated a proposed code patch.`,
-            url: incidentUrl,
-            color: color,
-            fields: [
-              {
-                name: "Severity",
-                value: severity.toUpperCase(),
-                inline: true,
-              },
-              {
-                name: "Probe ID",
-                value: probeId,
-                inline: true,
-              },
-              {
-                name: "Incident ID",
-                value: incidentId,
-                inline: true,
-              },
-            ],
-            footer: {
-              text: "Aegis Autonomous SRE Platform",
-            },
-            timestamp: new Date().toISOString(),
-          },
+async function sendDiscordAlert(params: AlertParams): Promise<void> {
+  if (!params.discordWebhookUrl) return;
+
+  const color = params.severity === "critical" ? 0xef4444 : 0xf59e0b;
+  const emoji = params.severity === "critical" ? "🚨" : "⚠️";
+
+  const body = {
+    embeds: [
+      {
+        title: `${emoji} Aegis Alert: ${params.title}`,
+        color,
+        fields: [
+          { name: "Severity", value: params.severity.toUpperCase(), inline: true },
+          { name: "Probe", value: params.probeId, inline: true },
+          { name: "Issue", value: params.issueType, inline: false },
         ],
-      };
+        url: `${params.dashboardUrl}/incidents/${params.incidentId}`,
+        footer: { text: "Aegis Autonomous SRE Platform" },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
 
-      await fetch(discordWebhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      console.log(`[Alerts] Discord notification sent for incident ${incidentId}`);
-    } catch (err) {
-      console.error("[Alerts] Failed to send Discord notification:", err);
-    }
+  const res = await fetch(params.discordWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Discord returned ${res.status}`);
+  }
+}
+
+async function sendWebhookAlert(params: AlertParams): Promise<void> {
+  if (!params.webhookUrl) return;
+
+  const body = {
+    event: params.prUrl ? "incident.resolved" : "incident.created",
+    severity: params.severity,
+    incidentId: params.incidentId,
+    probeId: params.probeId,
+    issueType: params.issueType,
+    dashboardUrl: `${params.dashboardUrl}/incidents/${params.incidentId}`,
+    prUrl: params.prUrl ?? null,
+    timestamp: new Date().toISOString(),
+  };
+
+  const res = await fetch(params.webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Webhook returned ${res.status}`);
   }
 }

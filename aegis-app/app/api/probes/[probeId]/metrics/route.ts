@@ -1,5 +1,4 @@
 /**
- * Per-probe metrics endpoint: POST /api/probes/:probeId/metrics
- * Delegates to the main webhook handler.
+ * Per-probe metrics endpoint — delegates to the main webhook handler.
  */
-export { POST } from "../../../webhooks/probe/route";
+export { POST } from "@/app/api/webhooks/probe/route";

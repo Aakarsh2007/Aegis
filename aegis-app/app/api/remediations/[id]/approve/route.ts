@@ -4,7 +4,7 @@ import { executeRemediation } from "@/lib/remediation";
 import { headers } from "next/headers";
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -17,6 +17,7 @@ export async function POST(
 
   try {
     const result = await executeRemediation(id, userId);
+
     if (!result.success) {
       return NextResponse.json(
         { error: result.errorMessage ?? "Failed to apply remediation patch" },
@@ -25,16 +26,13 @@ export async function POST(
     }
 
     return NextResponse.json({
-      message: "Remediation patch successfully applied and PR opened",
+      message: "Patch applied — PR opened successfully",
       prUrl: result.prUrl,
       prNumber: result.prNumber,
       branchName: result.branchName,
     });
   } catch (err) {
-    console.error("[Remediation Approval API] Error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    console.error("[Remediation Approve] Error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

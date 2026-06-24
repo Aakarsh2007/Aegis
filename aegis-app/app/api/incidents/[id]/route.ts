@@ -6,7 +6,7 @@ import { eq, and, asc } from "drizzle-orm";
 import { headers } from "next/headers";
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -49,9 +49,6 @@ export async function GET(
     });
   } catch (err) {
     console.error("[Incident Detail] Error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

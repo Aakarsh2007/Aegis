@@ -13,9 +13,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.0.1",
+    "@google/genai": "^1.52.0",
     "@neondatabase/serverless": "^0.10.4",
-    "@octokit/auth-app": "^8.2.0",
+    "@octokit/auth-app": "^7.2.2",
     "@octokit/rest": "^21.1.1",
     "@radix-ui/react-alert-dialog": "^1.1.6",
     "@radix-ui/react-avatar": "^1.1.3",
@@ -37,10 +37,10 @@
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.36.4",
     "lucide-react": "^0.475.0",
-    "next": "15.1.0",
+    "next": "15.3.6",
     "next-themes": "^0.4.6",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "recharts": "^2.15.0",
     "tailwind-merge": "^2.6.0",
     "zod": "^3.24.1"
@@ -52,7 +52,7 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.28.1",
     "eslint": "^9.17.0",
-    "eslint-config-next": "15.1.0",
+    "eslint-config-next": "15.3.6",
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2"
